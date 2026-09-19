@@ -54,10 +54,10 @@ Stops once the scan returns to DAY, so a lone populated day yields itself."
       (let* ((b (aref blocks i))
              (day (calendorg-block-day b))
              (mid (calendorg--midpoint b))
-             (range (aref ranges day))
-             ;; j and k wrap within the day; h and l wrap across the week.
-             (j (if (< i (cdr range)) (1+ i) (car range)))
-             (k (if (> i (car range)) (1- i) (cdr range))))
+             ;; Blocks are sorted by (day, start), so stepping the index runs
+             ;; chronologically and rolls into the next day on its own.
+             (j (mod (1+ i) n))
+             (k (mod (1- i) n)))
         (aset nav i (vector (calendorg--scan blocks ranges day mid -1)
                             j k
                             (calendorg--scan blocks ranges day mid 1)))))

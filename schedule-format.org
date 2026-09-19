@@ -48,7 +48,7 @@ Each is an uncertainty window rather than a fixed instant, rendered as a fade ac
 
 Adding a type here is all that is needed to make it render and appear in the legend. =allocated= must be declared; it is the type Calendorg writes.
 * Rules
-- A block may not cross midnight. Nothing in a weekly template needs to.
+- A span must be positive, so a block running past midnight ends at =24:00= or =25:00= rather than wrapping: =WED 21:30-25:00= means 21:30 to 01:00.
 - The grid runs 08:00 to 01:00. Times earlier than the grid start belong to the preceding day's column, so a =00:30= block sits at the bottom of the previous day.
 - Every block is weekly. No dates appear anywhere in either file.
 - Overlapping blocks are legal and render stacked.

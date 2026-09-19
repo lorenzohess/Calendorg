@@ -253,9 +253,28 @@ Falling back to the commitment is what makes an unlabelled meeting read as
                   (plist-get geom :x0) y (plist-get geom :width) y calendorg-now-color
                   (calendorg-x-of geom today) y calendorg-now-color))))))
 
+(defun calendorg--svg-cursor (geom vsel)
+  "Draw VSEL as a single line on a slot boundary."
+  (let* ((day (plist-get vsel :day))
+         (x (+ (calendorg-x-of geom day) 1))
+         (w (- (plist-get geom :col-w) 2))
+         (y (calendorg-y-of geom (plist-get vsel :point)))
+         (tint (calendorg--tint calendorg-select-color 0.45)))
+    (concat
+     (format "<rect x='%.1f' y='%.1f' width='%.1f' height='2.5' fill='%s'/>"
+             x (- y 1.25) w calendorg-select-color)
+     ;; Caret on the leading edge, so the line reads as a cursor.
+     (format "<path d='M %.1f %.1f L %.1f %.1f L %.1f %.1f Z' fill='%s'/>"
+             x (- y 4.5) (+ x 6) y x (+ y 4.5) calendorg-select-color)
+     (format "<text x='%.1f' y='%.1f' font-family='monospace' font-size='%d' fill='%s'>%s</text>"
+             (+ x 10) (- y 4) calendorg--font tint
+             (calendorg--min->hhmm (plist-get vsel :point))))))
+
 (defun calendorg--svg-selection (geom vsel)
   "Draw the time-select range described by VSEL."
   (when vsel
+   (if (plist-get vsel :cursor)
+       (calendorg--svg-cursor geom vsel)
     (let* ((day (plist-get vsel :day))
            (lo (min (plist-get vsel :anchor) (plist-get vsel :point)))
            (hi (max (plist-get vsel :anchor) (plist-get vsel :point)))
@@ -278,7 +297,7 @@ Falling back to the commitment is what makes an unlabelled meeting read as
       (concat out
               (format "<text x='%.1f' y='%.1f' font-family='monospace' font-size='%d' fill='%s'>%s–%s</text>"
                       (+ x 9) (+ y 14) calendorg--font tint
-                      (calendorg--min->hhmm lo) (calendorg--min->hhmm hi))))))
+                      (calendorg--min->hhmm lo) (calendorg--min->hhmm hi)))))))
 
 ;;; Entry point
 

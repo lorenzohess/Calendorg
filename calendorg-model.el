@@ -87,8 +87,11 @@ Resolved against `calendorg-schedule-dir' unless absolute."
   (+ (* 60 (string-to-number (substring s 0 2)))
      (string-to-number (substring s 3 5))))
 
-(defun calendorg--min->hhmm (m)
-  (let ((m (mod m 1440)))
+(defun calendorg--min->hhmm (m &optional past-midnight)
+  "Format M as HH:MM.  With PAST-MIDNIGHT, 1440 prints as 24:00 rather
+than 00:00, so a block running from before midnight to after it stays a
+single positive span on disk."
+  (let ((m (if past-midnight m (mod m 1440))))
     (format "%02d:%02d" (/ m 60) (mod m 60))))
 
 (defun calendorg--hours (block)
@@ -209,7 +212,8 @@ Returns (DAY START END) in grid space, or nil when the span is invalid."
     (when (>= start 1440)
       (setq day (mod (1+ day) 7)))
     (concat "- " (aref calendorg-days day)
-            " " (calendorg--min->hhmm start) "-" (calendorg--min->hhmm end)
+            " " (calendorg--min->hhmm start)
+            "-" (calendorg--min->hhmm end (and (< start 1440) (>= end 1440)))
             " " (calendorg-block-type b)
             (if (calendorg-block-commitment b)
                 (concat " @" (calendorg-block-commitment b)) "")

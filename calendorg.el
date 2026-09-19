@@ -23,6 +23,10 @@
 (defvar-local calendorg--nav nil)
 (defvar-local calendorg--sel nil "Index into `calendorg--blocks'.")
 (defvar-local calendorg--vsel nil "Plist (:day :anchor :point) while selecting time.")
+(defvar-local calendorg--vsel-exit nil
+  "Thunk that removes the time-select transient map.
+Kept so prompts can drop the map before reading the minibuffer, where
+`calendorg--vsel' is not bound and its motion keys would error.")
 (defvar-local calendorg--geom nil "Geometry of the last render, for hit-testing.")
 (defvar-local calendorg--last-size nil)
 
@@ -83,29 +87,39 @@
 
 ;;; Text below the calendar
 
+(defun calendorg--insert-centered (lines)
+  "Insert LINES centred as a block, aligned on the widest one."
+  (when lines
+    (let* ((wide (apply #'max (mapcar (lambda (l) (string-width (substring-no-properties l)))
+                                      lines)))
+           (pad (make-string (max 0 (/ (- (window-width) wide) 2)) ?\s)))
+      (dolist (l lines) (insert pad l "\n")))))
+
 (defun calendorg--insert-detail ()
   (let ((b (calendorg--selected)))
     (if (null b)
-        (insert (propertize
-                 (if (file-readable-p (calendorg-schedule-path))
-                     "No blocks parsed. Does the file match schedule-format.org?\n"
-                   (format "%s not found.\n" (calendorg-schedule-path)))
-                 'face 'shadow))
-      (insert (propertize
-               (format "%s · %s %s–%s · %s%s\n"
-                       (calendorg-block-title b)
-                       (aref calendorg--day-labels (calendorg-block-day b))
-                       (calendorg--min->hhmm (calendorg-block-start b))
-                       (calendorg--min->hhmm (calendorg-block-end b))
-                       (calendorg-block-type b)
-                       (if (calendorg-block-commitment b)
-                           (concat " @" (calendorg-block-commitment b)) ""))
-               'face `(:foreground ,(calendorg--tint
-                                     (calendorg--type-color
-                                      calendorg--data (calendorg-block-type b))
-                                     0.5))))
-      (insert (propertize (concat (or (calendorg-block-comment b) "") "\n")
-                          'face 'shadow)))))
+        (calendorg--insert-centered
+         (list (propertize
+                (if (file-readable-p (calendorg-schedule-path))
+                    "No blocks parsed. Does the file match schedule-format.org?"
+                  (format "%s not found." (calendorg-schedule-path)))
+                'face 'shadow)))
+      (calendorg--insert-centered
+       (list (propertize
+              (format "%s · %s %s–%s · %s%s"
+                      (calendorg-block-title b)
+                      (aref calendorg--day-labels (calendorg-block-day b))
+                      (calendorg--min->hhmm (calendorg-block-start b))
+                      (calendorg--min->hhmm (calendorg-block-end b))
+                      (calendorg-block-type b)
+                      (if (calendorg-block-commitment b)
+                          (concat " @" (calendorg-block-commitment b)) ""))
+              'face `(:foreground ,(calendorg--tint
+                                    (calendorg--type-color
+                                     calendorg--data (calendorg-block-type b))
+                                    0.5)))))
+      (calendorg--insert-centered
+       (list (propertize (or (calendorg-block-comment b) "") 'face 'shadow))))))
 
 (defun calendorg--insert-stats ()
   "One line per commitment: allocated against the budget less its meetings."
@@ -113,17 +127,20 @@
         (width 18))
     (when stats
       (let ((pad (apply #'max (mapcar (lambda (s) (length (car s))) stats))))
-        (dolist (s stats)
-          (cl-destructuring-bind (token allocated target) s
-            (let* ((ratio (if (> target 0) (/ allocated target) 0))
-                   (filled (min width (max 0 (round (* width ratio)))))
-                   (met (>= allocated target))
-                   (color (if met "#98be65" "#ECBE7B")))
-              (insert (format (format "%%-%ds  " pad) token)
-                      (propertize (make-string filled ?█) 'face `(:foreground ,color))
-                      (propertize (make-string (- width filled) ?░) 'face 'shadow)
-                      (propertize (format "  %.4g / %.4g h\n" allocated target)
-                                  'face `(:foreground ,color))))))))))
+        (calendorg--insert-centered
+         (mapcar
+          (lambda (s)
+            (cl-destructuring-bind (token allocated target) s
+              (let* ((ratio (if (> target 0) (/ allocated target) 0))
+                     (filled (min width (max 0 (round (* width ratio)))))
+                     (met (>= allocated target))
+                     (color (if met "#98be65" "#ECBE7B")))
+                (concat (format (format "%%-%ds  " pad) token)
+                        (propertize (make-string filled ?█) 'face `(:foreground ,color))
+                        (propertize (make-string (- width filled) ?░) 'face 'shadow)
+                        (propertize (format "  %.4g / %.4g h" allocated target)
+                                    'face `(:foreground ,color))))))
+          stats))))))
 
 ;;; Redisplay
 
@@ -142,9 +159,14 @@
           calendorg--last-size (cons (window-body-width nil t)
                                      (window-body-height nil t)))
     (erase-buffer)
-    (insert-image (create-image (calendorg-render calendorg--data calendorg--blocks
-                                                  calendorg--sel calendorg--vsel w h)
-                                'svg t :scale 1))
+    (let ((start (point)))
+      (insert-image (create-image (calendorg-render calendorg--data calendorg--blocks
+                                                    calendorg--sel calendorg--vsel w h)
+                                  'svg t :scale 1))
+      ;; `insert-image' hangs `image-map' off the image as a text property, and a
+      ;; text-property keymap outranks every other map -- including our own and
+      ;; evil's.  That is what swallows `i' (the image-transform prefix).
+      (remove-text-properties start (point) '(keymap nil)))
     (insert "\n\n")
     (calendorg--insert-detail)
     (insert "\n")
@@ -209,18 +231,27 @@
 (defun calendorg-mouse-select (event)
   "Select the block under the click."
   (interactive "e")
-  (when-let* ((xy (posn-object-x-y (event-start event)))
-              (geom calendorg--geom)
-              (day (calendorg-day-at geom (car xy))))
-    (let ((m (calendorg-minute-at geom (cdr xy))))
-      (cl-loop for i below (length calendorg--blocks)
-               for b = (aref calendorg--blocks i)
-               when (and (= (calendorg-block-day b) day)
-                         (>= m (calendorg-block-start b))
-                         (<= m (calendorg-block-end b)))
-               do (setq calendorg--sel i)
-               and return nil)
-      (calendorg--redisplay))))
+  (when-let* ((posn (event-start event))
+              (xy (posn-object-x-y posn))
+              (geom calendorg--geom))
+    ;; Emacs may display the SVG at a size other than the one we drew it at,
+    ;; so map click pixels back into geometry space before inverting.
+    (let* ((shown (ignore-errors (image-size (posn-image posn) t)))
+           (sx (if (and shown (> (car shown) 0))
+                   (/ (float (plist-get geom :width)) (car shown)) 1.0))
+           (sy (if (and shown (> (cdr shown) 0))
+                   (/ (float (plist-get geom :height)) (cdr shown)) 1.0))
+           (day (calendorg-day-at geom (* sx (car xy))))
+           (m (and day (calendorg-minute-at geom (* sy (cdr xy))))))
+      (when day
+        (cl-loop for i below (length calendorg--blocks)
+                 for b = (aref calendorg--blocks i)
+                 when (and (= (calendorg-block-day b) day)
+                           (>= m (calendorg-block-start b))
+                           (< m (calendorg-block-end b)))
+                 do (setq calendorg--sel i)
+                 and return nil)
+        (calendorg--redisplay)))))
 
 ;;; Editing
 
@@ -308,6 +339,8 @@
     (define-key m [up] #'calendorg-ts-shrink)
     (define-key m [left] #'calendorg-ts-prev-day)
     (define-key m [right] #'calendorg-ts-next-day)
+    (define-key m "J" #'calendorg-ts-later)
+    (define-key m "K" #'calendorg-ts-earlier)
     (define-key m "o" #'calendorg-ts-swap)
     (define-key m (kbd "RET") #'calendorg-ts-allocate)
     (define-key m "t" #'calendorg-ts-event)
@@ -339,15 +372,22 @@
                      (min (calendorg-block-end b)
                           (- calendorg-grid-end calendorg-slot))
                    calendorg-grid-start)))
-    (setq calendorg--vsel (list :day day :anchor anchor
-                               :point (+ anchor calendorg-slot)))
+    (setq calendorg--vsel (list :day day :anchor anchor :point anchor))
     (calendorg--redisplay)
-    (set-transient-map calendorg-time-select-map (lambda () calendorg--vsel))
+    (setq calendorg--vsel-exit
+          (set-transient-map calendorg-time-select-map (lambda () calendorg--vsel)))
     (message "%s" (calendorg--vsel-echo))))
+
+(defun calendorg--ts-quit ()
+  "Leave time select: drop the transient map and clear the selection."
+  (when calendorg--vsel-exit
+    (funcall calendorg--vsel-exit)
+    (setq calendorg--vsel-exit nil))
+  (setq calendorg--vsel nil))
 
 (defun calendorg--vsel-echo ()
   (let ((span (calendorg--vsel-span)))
-    (format "TIME SELECT %s %s–%s (%.2gh)  j/k ±15m · h/l day · o swap · RET allocate · t event · ESC"
+    (format "TIME SELECT %s %s–%s (%.2gh)  j/k grow · J/K move · h/l day · o swap · RET allocate · t event · ESC"
             (aref calendorg--day-labels (plist-get calendorg--vsel :day))
             (calendorg--min->hhmm (car span)) (calendorg--min->hhmm (cdr span))
             (/ (- (cdr span) (car span)) 60.0))))
@@ -376,6 +416,26 @@
                      (- (plist-get calendorg--vsel :point)
                         (* calendorg-slot (or n 1))))))))
 
+(defun calendorg-ts-slide (n)
+  "Move both ends N slots later, keeping the span, clamped to the grid."
+  (let* ((a (plist-get calendorg--vsel :anchor))
+         (p (plist-get calendorg--vsel :point))
+         (d (* calendorg-slot n))
+         (d (max (- calendorg-grid-start (min a p))
+                 (min d (- calendorg-grid-end (max a p))))))
+    (plist-put calendorg--vsel :anchor (+ a d))
+    (plist-put calendorg--vsel :point (+ p d))))
+
+(defun calendorg-ts-later (&optional n)
+  "Slide the selection N slots later."
+  (interactive "p")
+  (calendorg--vsel-update (lambda () (calendorg-ts-slide (or n 1)))))
+
+(defun calendorg-ts-earlier (&optional n)
+  "Slide the selection N slots earlier."
+  (interactive "p")
+  (calendorg--vsel-update (lambda () (calendorg-ts-slide (- (or n 1))))))
+
 (defun calendorg-ts-prev-day ()
   "Shift the whole range to the previous day, wrapping."
   (interactive)
@@ -399,43 +459,54 @@
        (plist-put calendorg--vsel :anchor p)
        (plist-put calendorg--vsel :point a)))))
 
-(defun calendorg--ts-finish (block)
-  (let ((keep (cons (calendorg-block-day block) (calendorg-block-start block))))
-    (setq calendorg--vsel nil)
-    (calendorg--commit (cons block (calendorg--own-blocks)) keep)))
+(defun calendorg--ts-finish (make)
+  "Leave time select, then commit the block MAKE returns for (DAY SPAN).
+The map has to come off before any prompt: it lives in
+`overriding-terminal-local-map', so its motion keys would otherwise fire
+inside the minibuffer against a nil `calendorg--vsel'.  Aborting a prompt
+unwinds to a clean calendar rather than stranding the overlay."
+  (let ((day (plist-get calendorg--vsel :day))
+        (span (calendorg--vsel-span))
+        (done nil))
+    (calendorg--ts-quit)
+    (unwind-protect
+        (let ((block (funcall make day span)))
+          (setq done t)
+          (calendorg--commit (cons block (calendorg--own-blocks))
+                             (cons (calendorg-block-day block)
+                                   (calendorg-block-start block))))
+      (unless done (calendorg--redisplay)))))
 
 (defun calendorg-ts-allocate ()
   "Create an allocated block over the selection."
   (interactive)
-  (let* ((span (calendorg--vsel-span))
-         (day (plist-get calendorg--vsel :day))
-         (commitment (calendorg--read-commitment)))
-    (calendorg--ts-finish
+  (calendorg--ts-finish
+   (lambda (day span)
      (make-calendorg-block :day day :start (car span) :end (cdr span)
                            :type calendorg-allocated-type
-                           :commitment commitment :source 'blocks))))
+                           :commitment (calendorg--read-commitment)
+                           :source 'blocks))))
 
 (defun calendorg-ts-event ()
   "Create an ad-hoc typed event over the selection."
   (interactive)
-  (let* ((span (calendorg--vsel-span))
-         (day (plist-get calendorg--vsel :day))
-         (types (cl-remove calendorg-allocated-type
-                           (mapcar #'car (calendorg-data-types calendorg--data))
-                           :test #'equal))
-         (type (completing-read "Type: " types nil t nil nil "other"))
-         (label (read-string "Label: "))
-         (comment (read-string "Comment: ")))
-    (calendorg--ts-finish
-     (make-calendorg-block
-      :day day :start (car span) :end (cdr span) :type type
-      :label (unless (string-empty-p (string-trim label)) (string-trim label))
-      :comment (unless (string-empty-p (string-trim comment)) (string-trim comment))
-      :source 'blocks))))
+  (calendorg--ts-finish
+   (lambda (day span)
+     (let* ((types (cl-remove calendorg-allocated-type
+                              (mapcar #'car (calendorg-data-types calendorg--data))
+                              :test #'equal))
+            (type (completing-read "Type: " types nil t nil nil "other"))
+            (label (read-string "Label: "))
+            (comment (read-string "Comment: ")))
+       (make-calendorg-block
+        :day day :start (car span) :end (cdr span) :type type
+        :label (unless (string-empty-p (string-trim label)) (string-trim label))
+        :comment (unless (string-empty-p (string-trim comment)) (string-trim comment))
+        :source 'blocks)))))
 
 (defun calendorg-ts-cancel ()
   (interactive)
-  (setq calendorg--vsel nil)
+  (calendorg--ts-quit)
   (calendorg--redisplay)
   (message nil))
 
@@ -483,28 +554,12 @@
   (buffer-disable-undo)
   (add-hook 'window-size-change-functions #'calendorg--on-resize nil t))
 
-;; Evil shadows single letters from `evil-normal-state-map', so the bindings
-;; have to live in the mode's auxiliary map to win.
+;; An auxiliary map still loses `i', `v', `x' and `c' to evil's own normal-state
+;; commands.  An intercept map outranks every evil state map, so the mode map
+;; above stays the single source of truth for bindings.
 (with-eval-after-load 'evil
   (evil-set-initial-state 'calendorg-mode 'normal)
-  (evil-define-key* 'normal calendorg-mode-map
-    "h" #'calendorg-left "j" #'calendorg-down
-    "k" #'calendorg-up   "l" #'calendorg-right
-    [left] #'calendorg-left [down] #'calendorg-down
-    [up] #'calendorg-up     [right] #'calendorg-right
-    (kbd "TAB") #'calendorg-next
-    [backtab] #'calendorg-previous
-    "gg" #'calendorg-first
-    "G" #'calendorg-last
-    "gr" #'calendorg-refresh
-    "0" #'calendorg-day-start
-    "$" #'calendorg-day-end
-    "v" #'calendorg-time-select
-    "i" #'calendorg-edit
-    "x" #'calendorg-delete
-    "c" #'calendorg-comment
-    "q" #'quit-window
-    [mouse-1] #'calendorg-mouse-select))
+  (evil-make-intercept-map calendorg-mode-map 'normal))
 
 ;;;###autoload
 (defun calendorg ()
