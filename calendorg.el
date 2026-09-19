@@ -29,6 +29,10 @@ Kept so prompts can drop the map before reading the minibuffer, where
 `calendorg--vsel' is not bound and its motion keys would error.")
 (defvar-local calendorg--geom nil "Geometry of the last render, for hit-testing.")
 (defvar-local calendorg--last-size nil)
+(defvar-local calendorg--last-image nil
+  "Previous image, flushed on redraw.
+Every redraw builds a new spec, so without this each one leaves its
+rasterised bitmap in the image cache until the eviction delay expires.")
 
 ;;; State
 
@@ -159,10 +163,14 @@ Kept so prompts can drop the map before reading the minibuffer, where
           calendorg--last-size (cons (window-body-width nil t)
                                      (window-body-height nil t)))
     (erase-buffer)
-    (let ((start (point)))
-      (insert-image (create-image (calendorg-render calendorg--data calendorg--blocks
-                                                    calendorg--sel calendorg--vsel w h)
-                                  'svg t :scale 1))
+    (when (and calendorg--last-image (display-graphic-p))
+      (image-flush calendorg--last-image))
+    (let ((start (point))
+          (img (create-image (calendorg-render calendorg--data calendorg--blocks
+                                               calendorg--sel calendorg--vsel w h)
+                             'svg t :scale 1)))
+      (setq calendorg--last-image img)
+      (insert-image img)
       ;; `insert-image' hangs `image-map' off the image as a text property, and a
       ;; text-property keymap outranks every other map -- including our own and
       ;; evil's.  That is what swallows `i' (the image-transform prefix).
@@ -341,6 +349,7 @@ Kept so prompts can drop the map before reading the minibuffer, where
     (define-key m [right] #'calendorg-ts-next-day)
     (define-key m "J" #'calendorg-ts-later)
     (define-key m "K" #'calendorg-ts-earlier)
+    (define-key m "v" #'calendorg-ts-promote)
     (define-key m "o" #'calendorg-ts-swap)
     (define-key m (kbd "RET") #'calendorg-ts-allocate)
     (define-key m "t" #'calendorg-ts-event)
@@ -361,6 +370,21 @@ Kept so prompts can drop the map before reading the minibuffer, where
             (cons lo (+ lo calendorg-slot))
           (cons (- hi calendorg-slot) hi))
       (cons lo hi))))
+
+(defun calendorg-time-cursor ()
+  "Place a movable line on a 15 minute boundary.  `v' selects a range from it."
+  (interactive)
+  (calendorg-time-select)
+  (plist-put calendorg--vsel :cursor t)
+  (calendorg--redisplay)
+  (message "%s" (calendorg--vsel-echo)))
+
+(defun calendorg-ts-promote ()
+  "Turn the cursor into a range selection starting where it sits."
+  (interactive)
+  (when (plist-get calendorg--vsel :cursor)
+    (calendorg--vsel-update
+     (lambda () (plist-put calendorg--vsel :cursor nil)))))
 
 (defun calendorg-time-select ()
   "Pick a time range in 15 minute slots, anchored at the selection's end."
@@ -386,11 +410,15 @@ Kept so prompts can drop the map before reading the minibuffer, where
   (setq calendorg--vsel nil))
 
 (defun calendorg--vsel-echo ()
-  (let ((span (calendorg--vsel-span)))
-    (format "TIME SELECT %s %s–%s (%.2gh)  j/k grow · J/K move · h/l day · o swap · RET allocate · t event · ESC"
-            (aref calendorg--day-labels (plist-get calendorg--vsel :day))
-            (calendorg--min->hhmm (car span)) (calendorg--min->hhmm (cdr span))
-            (/ (- (cdr span) (car span)) 60.0))))
+  (if (plist-get calendorg--vsel :cursor)
+      (format "TIME CURSOR %s %s  j/k ±15m · h/l day · v select · RET allocate · t event · ESC"
+              (aref calendorg--day-labels (plist-get calendorg--vsel :day))
+              (calendorg--min->hhmm (plist-get calendorg--vsel :point)))
+    (let ((span (calendorg--vsel-span)))
+      (format "TIME SELECT %s %s–%s (%.2gh)  j/k grow · J/K move · h/l day · o swap · RET allocate · t event · ESC"
+              (aref calendorg--day-labels (plist-get calendorg--vsel :day))
+              (calendorg--min->hhmm (car span)) (calendorg--min->hhmm (cdr span))
+              (/ (- (cdr span) (car span)) 60.0)))))
 
 (defun calendorg--vsel-update (fn)
   (funcall fn)
@@ -398,23 +426,28 @@ Kept so prompts can drop the map before reading the minibuffer, where
   (message "%s" (calendorg--vsel-echo)))
 
 (defun calendorg-ts-grow (&optional n)
-  "Move the selection's moving end N slots later."
+  "Move the selection's moving end N slots later.
+While the cursor is a bare line there is nothing to grow, so move it."
   (interactive "p")
   (calendorg--vsel-update
    (lambda ()
-     (plist-put calendorg--vsel :point
-                (min calendorg-grid-end
-                     (+ (plist-get calendorg--vsel :point)
-                        (* calendorg-slot (or n 1))))))))
+     (if (plist-get calendorg--vsel :cursor)
+         (calendorg-ts-slide (or n 1))
+       (plist-put calendorg--vsel :point
+                  (min calendorg-grid-end
+                       (+ (plist-get calendorg--vsel :point)
+                          (* calendorg-slot (or n 1)))))))))
 
 (defun calendorg-ts-shrink (&optional n)
   (interactive "p")
   (calendorg--vsel-update
    (lambda ()
-     (plist-put calendorg--vsel :point
-                (max calendorg-grid-start
-                     (- (plist-get calendorg--vsel :point)
-                        (* calendorg-slot (or n 1))))))))
+     (if (plist-get calendorg--vsel :cursor)
+         (calendorg-ts-slide (- (or n 1)))
+       (plist-put calendorg--vsel :point
+                  (max calendorg-grid-start
+                       (- (plist-get calendorg--vsel :point)
+                          (* calendorg-slot (or n 1)))))))))
 
 (defun calendorg-ts-slide (n)
   "Move both ends N slots later, keeping the span, clamped to the grid."
@@ -537,6 +570,7 @@ unwinds to a clean calendar rather than stranding the overlay."
     (define-key m "0" #'calendorg-day-start)
     (define-key m "$" #'calendorg-day-end)
     (define-key m "v" #'calendorg-time-select)
+    (define-key m "V" #'calendorg-time-cursor)
     (define-key m "i" #'calendorg-edit)
     (define-key m "x" #'calendorg-delete)
     (define-key m "c" #'calendorg-comment)

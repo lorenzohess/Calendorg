@@ -43,6 +43,7 @@ and =x= act only on allocated blocks.
 | =TAB=, =S-TAB=   | same as =j=, =k=              |
 | =gg=, =G=        | first, last block of week |
 | =0=, =$=         | first, last block of day  |
+| =V=            | place a time cursor       |
 | =v=            | select a time range       |
 | =i=            | edit selected             |
 | =x=            | delete selected           |
@@ -51,8 +52,8 @@ and =x= act only on allocated blocks.
 | =q=            | quit                      |
 
 *Visual Selection Mode*
-=v= starts a 15 minute cursor at the selected block's end. =J= and =K= move it
-anywhere in the day, =j= and =k= grow the range from there.
+=V= puts a line on a 15 minute boundary; =j= and =k= move it, =v= starts
+selecting a range from there. =v= on its own selects from the block's end.
 
 | Visual-Select Keybind | Action           |
 |-----------------------+------------------|
