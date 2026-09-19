@@ -1,0 +1,105 @@
+#+title: Calendorg timeblock spec
+
+* Files
+
+Two files, one grammar.
+
+| File                        | Owner | Contents                                |
+|-----------------------------+-------+-----------------------------------------|
+| =~/todo/schedule.org=         | you   | commitments, fixed blocks, sleep, types |
+| =~/todo/calendorg-blocks.org= | app   | allocated blocks                        |
+
+Calendorg parses both and writes only the second. It never modifies =schedule.org=.
+* Block grammar
+The one line shape that matters:
+
+#+begin_example
+- DAY HH:MM-HH:MM TYPE [@COMMITMENT] [label]
+  : optional comment
+#+end_example
+
+- =DAY= is one of =MON TUE WED THU FRI SAT SUN=.
+- Times are 24-hour, zero-padded, =HH:MM=. Always.
+- =TYPE= is a lowercase token declared under =* Types=.
+- =@COMMITMENT= is optional. When present it must name a commitment declared under =* Commitments=, and the block's hours count toward it.
+- =label= is optional free text. When absent the type name is used, title-cased with hyphens turned into spaces, so =ice-hockey= renders as "Ice hockey".
+- A comment is a following line indented and prefixed with =:=.
+* Sections
+Four headings, each with its own line shape. Order does not matter; anything outside a recognized heading is ignored.
+** Commitments
+#+begin_example
+- TOKEN HOURS
+#+end_example
+
+=HOURS= is the *total* weekly budget, meetings included. Do not record the "less meetings" figure - Calendorg derives it by subtracting every =meeting= block that references the commitment. Storing both invites them to drift.
+** Blocks
+Block lines, as above.
+** Sleep
+#+begin_example
+- wake HH:MM-HH:MM
+- sleep HH:MM-HH:MM
+#+end_example
+
+Each is an uncertainty window rather than a fixed instant, rendered as a fade across the range. Applies to every day.
+** Types
+#+begin_example
+- TOKEN #RRGGBB
+#+end_example
+
+Adding a type here is all that is needed to make it render and appear in the legend. =allocated= must be declared; it is the type Calendorg writes.
+* Rules
+- A block may not cross midnight. Nothing in a weekly template needs to.
+- The grid runs 08:00 to 01:00. Times earlier than the grid start belong to the preceding day's column, so a =00:30= block sits at the bottom of the previous day.
+- Every block is weekly. No dates appear anywhere in either file.
+- Overlapping blocks are legal and render stacked.
+* Parsing
+Dispatch on the current heading, then match one regexp per section.
+#+begin_src emacs-lisp
+(defconst calendorg--re-block
+  (concat "^[ \t]*-[ \t]+\\([A-Z]\\{3\\}\\)"
+          "[ \t]+\\([0-9]\\{2\\}:[0-9]\\{2\\}\\)-\\([0-9]\\{2\\}:[0-9]\\{2\\}\\)"
+          "[ \t]+\\([a-z][a-z-]*\\)"
+          "\\(?:[ \t]+@\\([^ \t]+\\)\\)?"
+          "\\(?:[ \t]+\\(.*?\\)\\)?[ \t]*$"))
+
+(defconst calendorg--re-comment    "^[ \t]+:[ \t]?\\(.*\\)$")
+(defconst calendorg--re-commitment "^[ \t]*-[ \t]+\\([^ \t]+\\)[ \t]+\\([0-9]+\\(?:\\.[0-9]+\\)?\\)[ \t]*$")
+(defconst calendorg--re-sleep      "^[ \t]*-[ \t]+\\(wake\\|sleep\\)[ \t]+\\([0-9]\\{2\\}:[0-9]\\{2\\}\\)-\\([0-9]\\{2\\}:[0-9]\\{2\\}\\)[ \t]*$")
+(defconst calendorg--re-type       "^[ \t]*-[ \t]+\\([a-z][a-z-]*\\)[ \t]+\\(#[0-9a-fA-F]\\{6\\}\\)[ \t]*$")
+#+end_src
+
+Block groups are day, start, end, type, commitment, label.
+* Stats
+For each commitment:
+
+- =target= = declared hours − hours of =meeting= blocks referencing it
+- =allocated= = hours of =allocated= blocks referencing it
+- panel shows =allocated / target=
+* Example
+#+begin_example
+,#+title: Schedule
+
+,* Commitments
+- COURSE-A 12
+- PROJ-A 6
+- COURSE-B 4
+
+,* Blocks
+- TUE 10:00-11:30 meeting @COURSE-A
+- THU 09:00-10:00 meeting @PROJ-A Subproject sync
+- FRI 16:00-17:00 other Team standup
+- SAT 07:30-09:00 ice-hockey
+- SUN 14:00-16:00 book-club
+  : bring the reading notes
+
+,* Sleep
+- wake 06:30-07:30
+- sleep 22:30-23:30
+
+,* Types
+- meeting #ff6c6b
+- ice-hockey #51afef
+- book-club #ECBE7B
+- other #5B6268
+- allocated #98be65
+#+end_example
