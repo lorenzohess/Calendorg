@@ -170,8 +170,9 @@ Falling back to the commitment is what makes an unlabelled meeting read as
          (out ""))
     ;; Today's column, faintly lifted.
     (when today
-      (setq out (format "<rect x='%.1f' y='0' width='%.1f' height='%.1f' fill='#ffffff' fill-opacity='0.025'/>"
-                        (calendorg-x-of geom today) col-w (plist-get geom :height))))
+      (setq out (format "<rect x='%.1f' y='0' width='%.1f' height='%.1f' fill='%s' fill-opacity='0.09'/>"
+                        (calendorg-x-of geom today) col-w (plist-get geom :height)
+                        calendorg-today-color)))
     ;; Rules on the hour, fainter on the half.
     (cl-loop for m from calendorg-grid-start to calendorg-grid-end by 30
              do (let ((y (calendorg-y-of geom m))
@@ -249,11 +250,12 @@ Falling back to the commitment is what makes an unlabelled meeting read as
            (m (+ (* 60 (nth 2 now)) (nth 1 now)))
            (m (if (< m calendorg-grid-start) (+ m 1440) m)))
       (when (and (>= m calendorg-grid-start) (<= m calendorg-grid-end))
-        (let ((y (calendorg-y-of geom m)))
+        (let ((y (calendorg-y-of geom m))
+              (x (calendorg-x-of geom today)))
           (format "<line x1='%.1f' y1='%.1f' x2='%.1f' y2='%.1f' stroke='%s' stroke-opacity='0.55'/>
 <circle cx='%.1f' cy='%.1f' r='3' fill='%s'/>"
-                  (plist-get geom :x0) y (plist-get geom :width) y calendorg-now-color
-                  (calendorg-x-of geom today) y calendorg-now-color))))))
+                  x y (+ x (plist-get geom :col-w)) y calendorg-now-color
+                  x y calendorg-now-color))))))
 
 (defun calendorg--svg-cursor (geom vsel)
   "Draw VSEL as a single line on a slot boundary."

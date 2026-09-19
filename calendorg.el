@@ -54,6 +54,39 @@ rasterised bitmap in the image cache until the eviction delay expires.")
                   (calendorg-block-title b) (calendorg-schedule-path)))
     b))
 
+(defun calendorg--now ()
+  "Current (DAY . MINUTE) in grid space.
+The small hours belong to the previous day's column, the same roll
+`calendorg--normalize' applies to parsed times."
+  (let* ((now (decode-time))
+         (day (mod (+ 6 (nth 6 now)) 7))
+         (m (+ (* 60 (nth 2 now)) (nth 1 now))))
+    (if (< m calendorg-grid-start)
+        (cons (mod (1- day) 7) (+ m 1440))
+      (cons day m))))
+
+(defun calendorg--now-index ()
+  "Index of the block happening now, else the next one, else the first."
+  (let* ((now (calendorg--now))
+         (day (car now))
+         (m (cdr now))
+         ;; start tops out at 1500, so this key sorts exactly as the blocks do.
+         (key (+ (* day 1600) m))
+         (n (length calendorg--blocks)))
+    (or (cl-loop for i below n
+                 for b = (aref calendorg--blocks i)
+                 when (and (= (calendorg-block-day b) day)
+                           (>= m (calendorg-block-start b))
+                           (< m (calendorg-block-end b)))
+                 return i)
+        (cl-loop for i below n
+                 for b = (aref calendorg--blocks i)
+                 when (>= (+ (* (calendorg-block-day b) 1600)
+                             (calendorg-block-start b))
+                          key)
+                 return i)
+        0)))
+
 (defun calendorg--rebuild (&optional keep)
   "Reload from disk.  KEEP is a (DAY . START) to reselect if still present."
   (setq calendorg--data (calendorg-load)
@@ -68,10 +101,10 @@ rasterised bitmap in the image cache until the eviction delay expires.")
                             when (and (= (calendorg-block-day b) (car keep))
                                       (= (calendorg-block-start b) (cdr keep)))
                             return i)
-                   0))
+                   (calendorg--now-index)))
          ((and calendorg--sel (< calendorg--sel (length calendorg--blocks)))
           calendorg--sel)
-         (t 0)))
+         (t (calendorg--now-index))))
   (when (calendorg-data-warnings calendorg--data)
     (message "calendorg: %d unparsed line(s); see calendorg-report-warnings"
              (length (calendorg-data-warnings calendorg--data)))))
@@ -585,6 +618,12 @@ unwinds to a clean calendar rather than stranding the overlay."
               buffer-read-only t
               mode-line-format nil)
   (when (boundp 'display-line-numbers) (setq-local display-line-numbers nil))
+  ;; `evil-refresh-cursor' overwrites `cursor-type' on every command, and point
+  ;; sits on the image, so the box cursor draws as a border around the whole
+  ;; calendar.  Suppressing it per state is the only thing that sticks.
+  (dolist (state '(normal insert visual motion emacs operator replace))
+    (let ((var (intern (format "evil-%s-state-cursor" state))))
+      (when (boundp var) (set (make-local-variable var) (list nil)))))
   (buffer-disable-undo)
   (add-hook 'window-size-change-functions #'calendorg--on-resize nil t))
 
