@@ -1,0 +1,43 @@
+#+title: Example schedule
+
+A 9-5 software engineer. Copy this to =schedule.org= in your =calendorg-schedule-dir= and edit it. See [[file:schedule-format.org][schedule-format.org]] for the grammar.
+
+* Commitments
+- SIDE-PROJECT 8
+- LEARNING 4
+* Blocks
+- MON 09:00-17:00 work
+- TUE 09:00-17:00 work
+- WED 09:00-17:00 work
+- THU 09:00-17:00 work
+- FRI 09:00-17:00 work
+
+- MON 09:30-10:30 meeting Sprint planning
+- WED 13:00-14:00 meeting Design review
+  : bring the migration doc
+- THU 11:00-11:30 meeting 1:1
+- FRI 16:00-17:00 meeting Retro
+
+- WED 19:00-20:00 meeting @SIDE-PROJECT OSS sync
+
+- TUE 18:00-19:00 fitness Gym
+- THU 18:00-19:00 fitness Gym
+- SAT 10:00-11:30 fitness Long run
+
+- WED 20:30-22:00 social Board games
+- FRI 18:30-23:00 social Movie
+- SAT 19:30-25:00 social Dinner party
+
+- SUN 09:30-11:30 church Service
+- SUN 12:00-13:30 social Church lunch
+* Sleep
+- wake 08:00-08:45
+- sleep 23:00-24:30
+* Types
+- work #5699AF
+- meeting #ff6c6b
+- social #da8548
+- church #ECBE7B
+- fitness #4db5bd
+- allocated #98be65
+- other #5B6268

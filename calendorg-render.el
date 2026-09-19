@@ -22,6 +22,7 @@
   "Axis labels." :type 'string :group 'calendorg)
 
 (defcustom calendorg-today-color "#51afef"
+  ;; Also washes the column background since the highlight was too faint.
   "Today's column header and marker." :type 'string :group 'calendorg)
 
 (defcustom calendorg-now-color "#ff6c6b"

@@ -13,8 +13,7 @@ Highly opinionated weekly schedule viewer for Doom Emacs.
 3. Beautiful SVG rendering.
 
 *Operation:*
-1. Keyboard driven, dark mode, one window.
-
+1. Keyboard driven (Vim bindings), dark mode, one window.
 ** Install
 Needs Emacs 29+ built with =RSVG=, and evil.
 #+begin_src emacs-lisp
@@ -27,14 +26,9 @@ Needs Emacs 29+ built with =RSVG=, and evil.
   :init (map! :map doom-leader-open-map "c" #'calendorg))
 #+end_src
 
-Both files live in =calendorg-schedule-dir=, which defaults to the =SCHEDULE_DIR=
-environment variable, or =~/nextcloud-sync/todo/=. Write =schedule.org= there
-following [[file:schedule-format.org][schedule-format.org]]; =calendorg-blocks.org= is created on first
-allocation.
+Both files live in =calendorg-schedule-dir=, which defaults to the =SCHEDULE_DIR= environment variable, or =~/nextcloud-sync/todo/=. Write =schedule.org= there following [[file:schedule-format.org][schedule-format.org]]; =calendorg-blocks.org= is created on first allocation.
 ** Usage
-=SPC o c= opens the calendar. Selection always sits on a block; the line below
-the calendar shows its comment. Blocks from =schedule.org= are immutable, so =i=
-and =x= act only on allocated blocks.
+=SPC o c= opens the calendar.
 
 | Keybind      | Action                    |
 |--------------+---------------------------|
@@ -52,8 +46,7 @@ and =x= act only on allocated blocks.
 | =q=            | quit                      |
 
 *Visual Selection Mode*
-=V= puts a line on a 15 minute boundary; =j= and =k= move it, =v= starts
-selecting a range from there. =v= on its own selects from the block's end.
+=V= puts a line cursor on a 15 minute boundary; =j= and =k= move it, =v= starts selecting a range from there. =v= on its own selects from the block's end.
 
 | Visual-Select Keybind | Action           |
 |-----------------------+------------------|
@@ -64,3 +57,35 @@ selecting a range from there. =v= on its own selects from the block's end.
 | =RET=                   | allocate         |
 | =t=                     | add other event  |
 | =ESC=                   | cancel           |
+
+To open an Emacs daemon client window with Calendorg loaded:
+#+begin_src bash
+emacsclient -c -n -F '((name . "calendorg"))' -e '(calendorg)'
+#+end_src
+** Configuration
+*Note:* All of these are =defcustom=, so =M-x customize-group RET calendorg= works too.
+*** Files
+| Variable                | Default                                    | Meaning                                     |
+|-------------------------+--------------------------------------------+---------------------------------------------|
+| =calendorg-schedule-dir=  | =$SCHEDULE_DIR=, else =~/nextcloud-sync/todo/= | Where schedule and timeblock files live     |
+| =calendorg-schedule-file= | =schedule.org=                               | Your schedule, never modified by Calendorg. |
+| =calendorg-blocks-file=   | =calendorg-blocks.org=                       | Your Calendorg timeblock data.              |
+
+*Note:* filenames are assumed relative to =calendorg-schedule-dir= unless they are absolute.
+*** Appearance
+| Variable                   | Default   | Meaning                    |
+|----------------------------+-----------+----------------------------|
+| =calendorg-bg=               | =#21242b=   | Canvas background          |
+| =calendorg-grid-color=       | =#2a2e35=   | Hour and day rules         |
+| =calendorg-grid-color-faint= | =#23262d=   | Half-hour rules            |
+| =calendorg-muted=            | =#5B6268=   | Axis labels                |
+| =calendorg-today-color=      | =#51afef=   | Today's column and header  |
+| =calendorg-now-color=        | =#ff6c6b=   | Current-time rule and dot  |
+| =calendorg-select-color=     | =#c678dd=   | Time cursor and selection  |
+| =calendorg-sleep-color=      | =#31363f=   | Sleep hatching             |
+| =calendorg-hour-height=      | =24=        | Fallback pixels per hour   |
+
+*Notes:*
+1. Colors are =#RRGGBB= strings. Block colors are not configured here, rather they are per-type in =schedule.org=.
+2. Immutable parameters, as =defconst=: the grid runs 08:00 to 01:00 (=calendorg-grid-start=, =calendorg-grid-end=) and the smallest unit is 15 minutes (=calendorg-slot=).
+3. Nothing outside the grid renders, so a wake time before 08:00 is not drawn.

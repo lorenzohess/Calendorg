@@ -1,58 +1,55 @@
-#+title: Calendorg timeblock spec
-
-* Files
-
+* Calendorg Timeblock Specification
+For an implementation example see [[file:schedule-example.org][schedule-example.org]].
+** Files
 Two files, one grammar.
 
-| File                        | Owner | Contents                                |
-|-----------------------------+-------+-----------------------------------------|
-| =~/todo/schedule.org=         | you   | commitments, fixed blocks, sleep, types |
-| =~/todo/calendorg-blocks.org= | app   | allocated blocks                        |
+| File                               | Owner | Contents                                |
+|------------------------------------+-------+-----------------------------------------|
+| =$SCHEDULE_DIR/schedule.org=         | you   | commitments, fixed blocks, sleep, types |
+| =$SCHEDULE_DIR/calendorg-blocks.org= | app   | allocated blocks                        |
 
-Calendorg parses both and writes only the second. It never modifies =schedule.org=.
-* Block grammar
-The one line shape that matters:
-
+Calendorg read both but only modifies the second. 
+** Block grammar
+To add a timeblock:
 #+begin_example
 - DAY HH:MM-HH:MM TYPE [@COMMITMENT] [label]
   : optional comment
 #+end_example
 
 - =DAY= is one of =MON TUE WED THU FRI SAT SUN=.
-- Times are 24-hour, zero-padded, =HH:MM=. Always.
+- Times are 24-hour, zero-padded, =HH:MM=.
 - =TYPE= is a lowercase token declared under =* Types=.
-- =@COMMITMENT= is optional. When present it must name a commitment declared under =* Commitments=, and the block's hours count toward it.
-- =label= is optional free text. When absent the type name is used, title-cased with hyphens turned into spaces, so =ice-hockey= renders as "Ice hockey".
-- A comment is a following line indented and prefixed with =:=.
-* Sections
-Four headings, each with its own line shape. Order does not matter; anything outside a recognized heading is ignored.
-** Commitments
+- =@COMMITMENT= is optional. It names a commitment declared under =* Commitments=, and the block's hours count toward it.
+- =label= is optional free text to provide timeblock tagging functionality. When absent the type name is used, title-cased with hyphens turned into spaces, so =ice-hockey= renders as "Ice hockey".
+- A comment is a new line indented and prefixed with =:=.
+** Org Heading Sections
+Four top-level heading sections are required, and each has its own line format for content. Section order does not matter, and anything outside a recognized heading is ignored.
+*** Commitments
 #+begin_example
 - TOKEN HOURS
 #+end_example
 
-=HOURS= is the *total* weekly budget, meetings included. Do not record the "less meetings" figure - Calendorg derives it by subtracting every =meeting= block that references the commitment. Storing both invites them to drift.
-** Blocks
-Block lines, as above.
-** Sleep
+=HOURS= is the *total* weekly budget, meetings included. 
+*** Blocks
+Timeblocks following block grammar.
+*** Sleep
+Your sleep hours for the entire week. The time window represents an uncertainty range, which is visualized as a gradient.
 #+begin_example
 - wake HH:MM-HH:MM
 - sleep HH:MM-HH:MM
 #+end_example
-
-Each is an uncertainty window rather than a fixed instant, rendered as a fade across the range. Applies to every day.
-** Types
+*** Types
 #+begin_example
 - TOKEN #RRGGBB
 #+end_example
 
-Adding a type here is all that is needed to make it render and appear in the legend. =allocated= must be declared; it is the type Calendorg writes.
-* Rules
-- A span must be positive, so a block running past midnight ends at =24:00= or =25:00= rather than wrapping: =WED 21:30-25:00= means 21:30 to 01:00.
+Adding a type here is all that is needed to make it render and appear in the legend. =allocated= must be declared, and it is the type Calendorg writes.
+** Rules
+- A block span must be positive, so a block running past midnight ends at =24:00= or =25:00= rather than wrapping: =WED 21:30-25:00= means 21:30 to 01:00.
 - The grid runs 08:00 to 01:00. Times earlier than the grid start belong to the preceding day's column, so a =00:30= block sits at the bottom of the previous day.
 - Every block is weekly. No dates appear anywhere in either file.
-- Overlapping blocks are legal and render stacked.
-* Parsing
+- Overlapping blocks are legal and will be visually overlapped.
+** Parsing
 Dispatch on the current heading, then match one regexp per section.
 #+begin_src emacs-lisp
 (defconst calendorg--re-block
@@ -69,37 +66,9 @@ Dispatch on the current heading, then match one regexp per section.
 #+end_src
 
 Block groups are day, start, end, type, commitment, label.
-* Stats
+** Stats
 For each commitment:
 
 - =target= = declared hours − hours of =meeting= blocks referencing it
 - =allocated= = hours of =allocated= blocks referencing it
 - panel shows =allocated / target=
-* Example
-#+begin_example
-,#+title: Schedule
-
-,* Commitments
-- COURSE-A 12
-- PROJ-A 6
-- COURSE-B 4
-
-,* Blocks
-- TUE 10:00-11:30 meeting @COURSE-A
-- THU 09:00-10:00 meeting @PROJ-A Subproject sync
-- FRI 16:00-17:00 other Team standup
-- SAT 07:30-09:00 ice-hockey
-- SUN 14:00-16:00 book-club
-  : bring the reading notes
-
-,* Sleep
-- wake 06:30-07:30
-- sleep 22:30-23:30
-
-,* Types
-- meeting #ff6c6b
-- ice-hockey #51afef
-- book-club #ECBE7B
-- other #5B6268
-- allocated #98be65
-#+end_example
