@@ -3,7 +3,7 @@ Highly opinionated weekly schedule viewer for Doom Emacs.
 - Input: Org file (satisfying a lightweight schema)
 - Output: rendered SVG calendar
 
-# TODO screenshot
+[[file:calendorg-screenshot.png]]
 
 *Features:*
 1. Allocate timeblocks into your schedule.
