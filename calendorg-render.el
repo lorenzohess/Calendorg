@@ -66,6 +66,16 @@
 (defun calendorg--type-color (data type)
   (or (cdr (assoc type (calendorg-data-types data))) calendorg-muted))
 
+(defun calendorg-block-color (data block)
+  "Colour for BLOCK.
+An allocated block takes its commitment's colour when one is declared, so
+two budgets read apart at a glance instead of both being generic green.
+Everything else is coloured by type."
+  (or (and (equal (calendorg-block-type block) calendorg-allocated-type)
+           (calendorg-block-commitment block)
+           (calendorg-commitment-color data (calendorg-block-commitment block)))
+      (calendorg--type-color data (calendorg-block-type block))))
+
 (defun calendorg--fill-opacity (type color)
   "Allocated blocks recede; fixed ones read as solid.
 Low-chroma colours need more alpha to carry the same weight."
@@ -208,7 +218,7 @@ Falling back to the commitment is what makes an unlabelled meeting read as
     out))
 
 (defun calendorg--svg-block (geom data block selectedp)
-  (let* ((color (calendorg--type-color data (calendorg-block-type block)))
+  (let* ((color (calendorg-block-color data block))
          (allocp (equal (calendorg-block-type block) calendorg-allocated-type))
          (x (+ (calendorg-x-of geom (calendorg-block-day block)) 1))
          (w (- (plist-get geom :col-w) 2))
@@ -276,7 +286,7 @@ Falling back to the commitment is what makes an unlabelled meeting read as
              (calendorg--min->hhmm (plist-get vsel :point))))))
 
 (defun calendorg--svg-selection (geom vsel)
-  "Draw the time-select range described by VSEL."
+  "Draw VSEL, as a cursor line when it carries :cursor, else as a range."
   (when vsel
    (if (plist-get vsel :cursor)
        (calendorg--svg-cursor geom vsel)

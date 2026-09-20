@@ -2,7 +2,8 @@
 
 ;; Each block gets a four-vector of neighbour indices, rebuilt whenever the
 ;; block set changes.  Because blocks are kept sorted by (day, start, end),
-;; j and k are just i+/-1 with a day check; only h and l need to search.
+;; j and k are just i+/-1 modulo the block count, which runs chronologically
+;; across midnight and wraps at the week; only h and l need to search.
 
 ;;; Code:
 

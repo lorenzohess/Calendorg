@@ -60,7 +60,8 @@ Resolved against `calendorg-schedule-dir' unless absolute."
           "\\(?:[ \t]+\\(.*?\\)\\)?[ \t]*$"))
 
 (defconst calendorg--re-comment    "^[ \t]+:[ \t]?\\(.*\\)$")
-(defconst calendorg--re-commitment "^[ \t]*-[ \t]+\\([^ \t]+\\)[ \t]+\\([0-9]+\\(?:\\.[0-9]+\\)?\\)[ \t]*$")
+(defconst calendorg--re-commitment
+  "^[ \t]*-[ \t]+\\([^ \t]+\\)[ \t]+\\([0-9]+\\(?:\\.[0-9]+\\)?\\)\\(?:[ \t]+\\(#[0-9a-fA-F]\\{6\\}\\)\\)?[ \t]*$")
 (defconst calendorg--re-sleep      "^[ \t]*-[ \t]+\\(wake\\|sleep\\)[ \t]+\\([0-9]\\{2\\}:[0-9]\\{2\\}\\)-\\([0-9]\\{2\\}:[0-9]\\{2\\}\\)[ \t]*$")
 (defconst calendorg--re-type       "^[ \t]*-[ \t]+\\([a-z][a-z-]*\\)[ \t]+\\(#[0-9a-fA-F]\\{6\\}\\)[ \t]*$")
 (defconst calendorg--re-heading    "^\\*+[ \t]+\\(.*?\\)[ \t]*$")
@@ -75,7 +76,7 @@ Resolved against `calendorg-schedule-dir' unless absolute."
   source)      ; `schedule' (immutable) or `blocks' (ours)
 
 (cl-defstruct calendorg-data
-  commitments  ; alist (token . hours)
+  commitments  ; list of (token hours color-or-nil)
   types        ; alist (token . "#rrggbb")
   wake sleep   ; (start . end) in grid space, or nil
   blocks       ; list
@@ -165,8 +166,9 @@ Returns (DAY START END) in grid space, or nil when the span is invalid."
 
              ((equal section "commitments")
               (if (string-match calendorg--re-commitment line)
-                  (push (cons (match-string 1 line)
-                              (string-to-number (match-string 2 line)))
+                  (push (list (match-string 1 line)
+                              (string-to-number (match-string 2 line))
+                              (match-string 3 line))
                         (calendorg-data-commitments acc))
                 (push line (calendorg-data-warnings acc))))
 
@@ -235,21 +237,27 @@ Returns (DAY START END) in grid space, or nil when the span is invalid."
 
 ;;; Stats
 
+(defun calendorg-commitment-color (data token)
+  "Colour declared for TOKEN, or nil when it did not name one."
+  (nth 2 (assoc token (calendorg-data-commitments data))))
+
 (defun calendorg-stats (data)
   "Return a list of (TOKEN ALLOCATED TARGET) in declaration order.
-TARGET is the declared budget less the meetings that reference it."
+TARGET is the declared budget less every block in the schedule file that
+references the commitment, whatever its type: those hours are already
+spoken for, so only the remainder is yours to allocate."
   (let ((blocks (calendorg-data-blocks data)))
     (mapcar
      (lambda (c)
-       (let ((token (car c)) (meetings 0.0) (allocated 0.0))
+       (let ((token (car c)) (spoken-for 0.0) (allocated 0.0))
          (dolist (b blocks)
            (when (equal (calendorg-block-commitment b) token)
              (cond
               ((equal (calendorg-block-type b) calendorg-allocated-type)
                (cl-incf allocated (calendorg--hours b)))
               ((eq (calendorg-block-source b) 'schedule)
-               (cl-incf meetings (calendorg--hours b))))))
-         (list token allocated (- (cdr c) meetings))))
+               (cl-incf spoken-for (calendorg--hours b))))))
+         (list token allocated (- (nth 1 c) spoken-for))))
      (calendorg-data-commitments data))))
 
 (provide 'calendorg-model)

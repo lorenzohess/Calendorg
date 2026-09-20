@@ -1,5 +1,3 @@
-#+title: Readme
-
 * Calendorg
 Highly opinionated weekly schedule viewer for Doom Emacs.
 - Input: Org file (satisfying a lightweight schema)
@@ -15,7 +13,7 @@ Highly opinionated weekly schedule viewer for Doom Emacs.
 *Operation:*
 1. Keyboard driven (Vim bindings), dark mode, one window.
 ** Install
-Needs Emacs 29+ built with =RSVG=, and evil.
+Needs Emacs 29+ built with =RSVG=, and optionally evil-mode.
 #+begin_src emacs-lisp
 ;; packages.el
 (package! calendorg :recipe (:local-repo "/home/lh/nextcloud-sync/projects/calendorg" :files ("*.el")))
@@ -26,7 +24,7 @@ Needs Emacs 29+ built with =RSVG=, and evil.
   :init (map! :map doom-leader-open-map "c" #'calendorg))
 #+end_src
 
-Both files live in =calendorg-schedule-dir=, which defaults to the =SCHEDULE_DIR= environment variable, or =~/nextcloud-sync/todo/=. Write =schedule.org= there following [[file:schedule-format.org][schedule-format.org]]; =calendorg-blocks.org= is created on first allocation.
+Both files live in =calendorg-schedule-dir=, which defaults to the =SCHEDULE_DIR= environment variable, or =~/nextcloud-sync/todo/=. Write =schedule.org= there following [[file:schedule-format.org][schedule-format.org]]. Then =calendorg-blocks.org= is created on first allocation.
 ** Usage
 =SPC o c= opens the calendar.
 

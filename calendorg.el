@@ -22,7 +22,10 @@
 (defvar-local calendorg--ranges nil)
 (defvar-local calendorg--nav nil)
 (defvar-local calendorg--sel nil "Index into `calendorg--blocks'.")
-(defvar-local calendorg--vsel nil "Plist (:day :anchor :point) while selecting time.")
+(defvar-local calendorg--vsel nil
+  "Plist (:day :anchor :point [:cursor t]) while picking a time.
+With :cursor the two ends are held together and drawn as a single line;
+`v' drops the flag to start extending a range.")
 (defvar-local calendorg--vsel-exit nil
   "Thunk that removes the time-select transient map.
 Kept so prompts can drop the map before reading the minibuffer, where
@@ -152,8 +155,7 @@ The small hours belong to the previous day's column, the same roll
                       (if (calendorg-block-commitment b)
                           (concat " @" (calendorg-block-commitment b)) ""))
               'face `(:foreground ,(calendorg--tint
-                                    (calendorg--type-color
-                                     calendorg--data (calendorg-block-type b))
+                                    (calendorg-block-color calendorg--data b)
                                     0.5)))))
       (calendorg--insert-centered
        (list (propertize (or (calendorg-block-comment b) "") 'face 'shadow))))))
