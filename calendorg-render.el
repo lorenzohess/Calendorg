@@ -51,11 +51,15 @@
         (string-to-number (substring hex 3 5) 16)
         (string-to-number (substring hex 5 7) 16)))
 
+(defun calendorg--mix (hex other amount)
+  "Blend HEX toward OTHER by AMOUNT, 0.0 to 1.0."
+  (apply #'format "#%02x%02x%02x"
+         (cl-mapcar (lambda (a b) (max 0 (min 255 (round (+ a (* amount (- b a)))))))
+                    (calendorg--rgb hex) (calendorg--rgb other))))
+
 (defun calendorg--tint (hex amount)
   "Blend HEX toward white by AMOUNT, 0.0 to 1.0."
-  (apply #'format "#%02x%02x%02x"
-         (mapcar (lambda (c) (min 255 (round (+ c (* amount (- 255 c))))))
-                 (calendorg--rgb hex))))
+  (calendorg--mix hex "#ffffff" amount))
 
 (defun calendorg--saturation (hex)
   (let* ((rgb (calendorg--rgb hex))
@@ -107,14 +111,17 @@ Falling back to the commitment is what makes an unlabelled meeting read as
 
 ;;; Geometry
 
-(defun calendorg-geometry (width height)
-  "Layout plist for a canvas of WIDTH by HEIGHT pixels."
+(defun calendorg-geometry (width height &optional anchor)
+  "Layout plist for a canvas of WIDTH by HEIGHT pixels.
+ANCHOR is the day index drawn in the leftmost column, Monday when nil.
+Every day-to-pixel conversion goes through it, so the rest of the code
+keeps working in day indices and never sees the rotation."
   (let* ((x0 calendorg--gutter)
          (y0 calendorg--header)
          (col-w (/ (- width x0) 7.0))
          (grid-h (- height y0)))
     (list :width width :height height :x0 x0 :y0 y0
-          :col-w col-w :grid-h grid-h
+          :col-w col-w :grid-h grid-h :anchor (or anchor 0)
           :span (float (- calendorg-grid-end calendorg-grid-start)))))
 
 (defun calendorg-y-of (geom minute)
@@ -122,13 +129,19 @@ Falling back to the commitment is what makes an unlabelled meeting read as
      (* (plist-get geom :grid-h)
         (/ (- minute calendorg-grid-start) (plist-get geom :span)))))
 
+(defun calendorg--col-x (geom col)
+  "Left edge of screen column COL, counting from the left."
+  (+ (plist-get geom :x0) (* col (plist-get geom :col-w))))
+
 (defun calendorg-x-of (geom day)
-  (+ (plist-get geom :x0) (* day (plist-get geom :col-w))))
+  "Left edge of DAY's column, after rotating by the geometry's anchor."
+  (calendorg--col-x geom (mod (- day (plist-get geom :anchor)) 7)))
 
 (defun calendorg-day-at (geom x)
-  "Column index at pixel X, or nil outside the grid."
-  (let ((d (floor (/ (- x (plist-get geom :x0)) (plist-get geom :col-w)))))
-    (and (>= d 0) (<= d 6) d)))
+  "Day index under pixel X, or nil outside the grid."
+  (let ((col (floor (/ (- x (plist-get geom :x0)) (plist-get geom :col-w)))))
+    (and (>= col 0) (<= col 6)
+         (mod (+ col (plist-get geom :anchor)) 7))))
 
 (defun calendorg-minute-at (geom y)
   "Minute at pixel Y, snapped to the slot size."
@@ -194,8 +207,8 @@ Falling back to the commitment is what makes an unlabelled meeting read as
                                             (if hourp calendorg-grid-color
                                               calendorg-grid-color-faint))))))
     ;; Day separators.
-    (cl-loop for d from 1 to 6
-             do (let ((x (calendorg-x-of geom d)))
+    (cl-loop for col from 1 to 6
+             do (let ((x (calendorg--col-x geom col)))
                   (setq out (concat out
                                     (format "<line x1='%.1f' y1='%.1f' x2='%.1f' y2='%.1f' stroke='%s'/>"
                                             x (plist-get geom :y0) x (plist-get geom :height)
@@ -255,14 +268,13 @@ Falling back to the commitment is what makes an unlabelled meeting read as
                                 (calendorg--min->hhmm (calendorg-block-end block))))))
     out))
 
-(defun calendorg--svg-now (geom today)
-  (when today
-    (let* ((now (decode-time))
-           (m (+ (* 60 (nth 2 now)) (nth 1 now)))
-           (m (if (< m calendorg-grid-start) (+ m 1440) m)))
+(defun calendorg--svg-now (geom now)
+  "Rule and dot at NOW, a (DAY . MINUTE) cons in grid space."
+  (when now
+    (let ((m (cdr now)))
       (when (and (>= m calendorg-grid-start) (<= m calendorg-grid-end))
         (let ((y (calendorg-y-of geom m))
-              (x (calendorg-x-of geom today)))
+              (x (calendorg-x-of geom (car now))))
           (format "<line x1='%.1f' y1='%.1f' x2='%.1f' y2='%.1f' stroke='%s' stroke-opacity='0.55'/>
 <circle cx='%.1f' cy='%.1f' r='3' fill='%s'/>"
                   x y (+ x (plist-get geom :col-w)) y calendorg-now-color
@@ -281,8 +293,9 @@ Falling back to the commitment is what makes an unlabelled meeting read as
      ;; Caret on the leading edge, so the line reads as a cursor.
      (format "<path d='M %.1f %.1f L %.1f %.1f L %.1f %.1f Z' fill='%s'/>"
              x (- y 4.5) (+ x 6) y x (+ y 4.5) calendorg-select-color)
-     (format "<text x='%.1f' y='%.1f' font-family='monospace' font-size='%d' fill='%s'>%s</text>"
-             (+ x 10) (- y 4) calendorg--font tint
+     ;; Right-aligned, clear of the left-aligned titles in the blocks it crosses.
+     (format "<text x='%.1f' y='%.1f' text-anchor='end' font-family='monospace' font-size='%d' fill='%s'>%s</text>"
+             (+ x w -4) (- y 4) calendorg--font tint
              (calendorg--min->hhmm (plist-get vsel :point))))))
 
 (defun calendorg--svg-selection (geom vsel)
@@ -310,17 +323,23 @@ Falling back to the commitment is what makes an unlabelled meeting read as
         (setq out (concat out (format "<rect x='%.1f' y='%.1f' width='%.1f' height='2.5' fill='%s'/>"
                                       x (- py 1.25) w tint))))
       (concat out
-              (format "<text x='%.1f' y='%.1f' font-family='monospace' font-size='%d' fill='%s'>%s–%s</text>"
-                      (+ x 9) (+ y 14) calendorg--font tint
+              ;; Right-aligned for the same reason as the cursor stamp.
+              (format "<text x='%.1f' y='%.1f' text-anchor='end' font-family='monospace' font-size='%d' fill='%s'>%s–%s</text>"
+                      (+ x w -5) (+ y 14) calendorg--font tint
                       (calendorg--min->hhmm lo) (calendorg--min->hhmm hi)))))))
 
 ;;; Entry point
 
 (defun calendorg-render (data blocks sel vsel width height)
   "Return the SVG string for the week.
-BLOCKS is a vector, SEL an index or nil, VSEL a time-select plist or nil."
-  (let* ((geom (calendorg-geometry width height))
-         (today (mod (+ 6 (nth 6 (decode-time))) 7)))
+BLOCKS is a vector, SEL an index or nil, VSEL a time-select plist or nil.
+Columns start at `calendorg-view-anchor', so callers hit-testing the
+result must build their geometry with the same anchor."
+  (let* ((geom (calendorg-geometry width height (calendorg-view-anchor data)))
+         (now (calendorg--now))
+         ;; Highlight the column the current moment sits in, which after
+         ;; midnight is the previous day's.
+         (today (car now)))
     (with-temp-buffer
       (insert (format "<svg xmlns='http://www.w3.org/2000/svg' width='%d' height='%d' viewBox='0 0 %d %d'>"
                       width height width height))
@@ -338,7 +357,7 @@ BLOCKS is a vector, SEL an index or nil, VSEL a time-select plist or nil."
               (insert (calendorg--svg-block geom data b nil))))))
       (when (and sel (< sel (length blocks)))
         (insert (calendorg--svg-block geom data (aref blocks sel) t)))
-      (insert (or (calendorg--svg-now geom today) ""))
+      (insert (or (calendorg--svg-now geom now) ""))
       (insert (or (calendorg--svg-selection geom vsel) ""))
       (insert "</svg>")
       (buffer-string))))

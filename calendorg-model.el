@@ -52,6 +52,20 @@ Resolved against `calendorg-schedule-dir' unless absolute."
 (defconst calendorg-allocated-type "allocated"
   "Type token Calendorg writes.  Blocks of this type are mutable.")
 
+(defconst calendorg-meeting-type "meeting"
+  "Type token whose blocks mark a commitment's reporting point.
+A meeting carrying @COMMITMENT starts that commitment's period.")
+
+(defconst calendorg--week 10080
+  "Minutes in a week.")
+
+(defcustom calendorg-anchor-commitment nil
+  "Commitment whose last meeting starts the week on screen.
+nil picks the first declared commitment that has a meeting.  With no
+meeting to anchor on, the week runs Monday to Sunday."
+  :type '(choice (const :tag "First with a meeting" nil) string)
+  :group 'calendorg)
+
 (defconst calendorg--re-block
   (concat "^[ \t]*-[ \t]+\\([A-Z]\\{3\\}\\)"
           "[ \t]+\\([0-9]\\{2\\}:[0-9]\\{2\\}\\)-\\([0-9]\\{2\\}:[0-9]\\{2\\}\\)"
@@ -94,6 +108,35 @@ than 00:00, so a block running from before midnight to after it stays a
 single positive span on disk."
   (let ((m (if past-midnight m (mod m 1440))))
     (format "%02d:%02d" (/ m 60) (mod m 60))))
+
+(defun calendorg--now ()
+  "Current (DAY . MINUTE) in grid space.
+The small hours belong to the preceding day's column, the same roll
+`calendorg--normalize' applies to parsed times: at 00:06 Monday you are
+at the bottom of Sunday, not the top of Monday.  Between the grid end and
+the grid start there is no column to roll onto, so the calendar day
+stands and callers find MINUTE outside the grid."
+  (let* ((now (decode-time))
+         (day (mod (+ 6 (nth 6 now)) 7))
+         (m (+ (* 60 (nth 2 now)) (nth 1 now))))
+    (if (and (< m calendorg-grid-start)
+             (<= (+ m 1440) calendorg-grid-end))
+        (cons (mod (1- day) 7) (+ m 1440))
+      (cons day m))))
+
+(defun calendorg--abs (day minute)
+  "Minutes since Monday 00:00 for grid-space DAY and MINUTE, wrapped to a week.
+Grid space lets MINUTE run past 1440; that is simply the next morning."
+  (mod (+ (* day 1440) minute) calendorg--week))
+
+(defun calendorg--since (from to)
+  "Minutes forward from FROM to TO, both week-absolute, wrapping."
+  (mod (- to from) calendorg--week))
+
+(defun calendorg--now-abs ()
+  "The current moment, week-absolute."
+  (let ((now (calendorg--now)))
+    (calendorg--abs (car now) (cdr now))))
 
 (defun calendorg--hours (block)
   (/ (- (calendorg-block-end block) (calendorg-block-start block)) 60.0))
@@ -241,23 +284,87 @@ Returns (DAY START END) in grid space, or nil when the span is invalid."
   "Colour declared for TOKEN, or nil when it did not name one."
   (nth 2 (assoc token (calendorg-data-commitments data))))
 
-(defun calendorg-stats (data)
-  "Return a list of (TOKEN ALLOCATED TARGET) in declaration order.
-TARGET is the declared budget less every block in the schedule file that
-references the commitment, whatever its type: those hours are already
-spoken for, so only the remainder is yours to allocate."
-  (let ((blocks (calendorg-data-blocks data)))
+(defun calendorg--meetings (data token)
+  "TOKEN's meeting blocks, in any order."
+  (cl-loop for b in (calendorg-data-blocks data)
+           when (and (equal (calendorg-block-type b) calendorg-meeting-type)
+                     (equal (calendorg-block-commitment b) token))
+           collect b))
+
+(defun calendorg-period (data token now)
+  "TOKEN's current reporting period as (START LENGTH MEETING).
+START is the week-absolute minute of its most recent meeting at or before
+NOW, also week-absolute; LENGTH runs to the next meeting, a full week when
+it meets once.  MEETING is the block that opened the period.  With no
+meeting the period is the calendar week from Monday at the grid start,
+and MEETING is nil."
+  (let ((ms (calendorg--meetings data token)))
+    (if (null ms)
+        (list calendorg-grid-start calendorg--week nil)
+      (let* ((abs (lambda (b) (calendorg--abs (calendorg-block-day b)
+                                              (calendorg-block-start b))))
+             (last (car (sort (copy-sequence ms)
+                              (lambda (a b)
+                                (< (calendorg--since (funcall abs a) now)
+                                   (calendorg--since (funcall abs b) now))))))
+             (start (funcall abs last))
+             (next (cl-loop for b in ms
+                            for d = (calendorg--since start (funcall abs b))
+                            when (> d 0) minimize d)))
+        (list start (if (and next (> next 0)) next calendorg--week) last)))))
+
+(defun calendorg-view-anchor (data)
+  "Day index for the leftmost column: the day the current period began.
+See `calendorg-anchor-commitment' for which commitment decides."
+  (let ((now (calendorg--now-abs)))
+    (or (cl-loop for token in (if calendorg-anchor-commitment
+                                  (list calendorg-anchor-commitment)
+                                (mapcar #'car (calendorg-data-commitments data)))
+                 for meeting = (nth 2 (calendorg-period data token now))
+                 when meeting return (calendorg-block-day meeting))
+        0)))
+
+(defun calendorg-stats (data &optional now)
+  "Return a list of (TOKEN DONE ALLOCATED TARGET) in declaration order.
+Each commitment is measured over its own period, from its last meeting to
+its next (see `calendorg-period'), at NOW, week-absolute, defaulting to
+the present.
+
+ALLOCATED is the allocated hours inside that period.  DONE is the part of
+them already behind NOW, on the honour system: a block counts as done as
+its time passes, including partway through.  TARGET is the declared budget
+less every block in the schedule file that references the commitment,
+whatever its type, since those hours are already spoken for; it is then
+prorated to the period, which only matters for a commitment meeting more
+than once a week."
+  (let ((blocks (calendorg-data-blocks data))
+        (now (or now (calendorg--now-abs))))
     (mapcar
      (lambda (c)
-       (let ((token (car c)) (spoken-for 0.0) (allocated 0.0))
+       (let* ((token (car c))
+              (period (calendorg-period data token now))
+              (start (nth 0 period))
+              (len (nth 1 period))
+              (elapsed (calendorg--since start now))
+              (spoken-for 0.0) (done 0.0) (allocated 0.0))
          (dolist (b blocks)
            (when (equal (calendorg-block-commitment b) token)
              (cond
               ((equal (calendorg-block-type b) calendorg-allocated-type)
-               (cl-incf allocated (calendorg--hours b)))
+               ;; Place the block relative to the period start, clip it to
+               ;; the period, and split it at now.
+               (let* ((lo (calendorg--since
+                           start (calendorg--abs (calendorg-block-day b)
+                                                 (calendorg-block-start b))))
+                      (hi (min len (+ lo (- (calendorg-block-end b)
+                                            (calendorg-block-start b))))))
+                 (when (< lo hi)
+                   (cl-incf allocated (/ (- hi lo) 60.0))
+                   (cl-incf done (/ (max 0 (- (min hi elapsed) lo)) 60.0)))))
               ((eq (calendorg-block-source b) 'schedule)
                (cl-incf spoken-for (calendorg--hours b))))))
-         (list token allocated (- (nth 1 c) spoken-for))))
+         (list token done allocated
+               (* (- (nth 1 c) spoken-for) (/ (float len) calendorg--week)))))
      (calendorg-data-commitments data))))
 
 (provide 'calendorg-model)

@@ -4,9 +4,10 @@
 ;; Package-Requires: ((emacs "29.1"))
 
 ;; Renders the schedule in `calendorg-schedule-dir' as an SVG week and allocates
-;; blocks into the
-;; gaps.  Selection always sits on a block; `v' drops into a slot cursor for
-;; picking a time range.  See schedule-format.org for the data format.
+;; blocks into the gaps.  The week starts at the last meeting of the anchoring
+;; commitment, and each commitment's hours are counted from its own last
+;; meeting.  Selection always sits on a block; `V' places a time cursor and `v'
+;; selects a range.  See schedule-format.org for the data format.
 
 ;;; Code:
 
@@ -56,17 +57,6 @@ rasterised bitmap in the image cache until the eviction delay expires.")
       (user-error "%s is fixed; edit %s by hand"
                   (calendorg-block-title b) (calendorg-schedule-path)))
     b))
-
-(defun calendorg--now ()
-  "Current (DAY . MINUTE) in grid space.
-The small hours belong to the previous day's column, the same roll
-`calendorg--normalize' applies to parsed times."
-  (let* ((now (decode-time))
-         (day (mod (+ 6 (nth 6 now)) 7))
-         (m (+ (* 60 (nth 2 now)) (nth 1 now))))
-    (if (< m calendorg-grid-start)
-        (cons (mod (1- day) 7) (+ m 1440))
-      (cons day m))))
 
 (defun calendorg--now-index ()
   "Index of the block happening now, else the next one, else the first."
@@ -160,8 +150,19 @@ The small hours belong to the previous day's column, the same roll
       (calendorg--insert-centered
        (list (propertize (or (calendorg-block-comment b) "") 'face 'shadow))))))
 
+(defun calendorg--faded (hex)
+  "HEX pushed most of the way toward the background, for hours still ahead.
+Faces have no alpha, so transparency is faked by mixing."
+  (let ((bg (face-background 'default nil t)))
+    (calendorg--mix hex (if (and bg (string-prefix-p "#" bg)) bg calendorg-bg)
+                    0.6)))
+
 (defun calendorg--insert-stats ()
-  "One line per commitment: allocated against the budget less its meetings."
+  "One line per commitment, measured over its period (`calendorg-stats').
+The bar is solid for hours already done, faded for hours allocated but
+still ahead, and hollow for what is left unallocated.  Green once enough
+is allocated, amber until then: the colour says whether the plan covers
+the target, the solid part says how far into it you are."
   (let ((stats (calendorg-stats calendorg--data))
         (width 18))
     (when stats
@@ -169,16 +170,22 @@ The small hours belong to the previous day's column, the same roll
         (calendorg--insert-centered
          (mapcar
           (lambda (s)
-            (cl-destructuring-bind (token allocated target) s
-              (let* ((ratio (if (> target 0) (/ allocated target) 0))
-                     (filled (min width (max 0 (round (* width ratio)))))
+            (cl-destructuring-bind (token done allocated target) s
+              (let* ((cells (lambda (h) (if (> target 0)
+                                            (min width (max 0 (round (* width (/ h target)))))
+                                          0)))
+                     (solid (funcall cells done))
+                     (planned (max solid (funcall cells allocated)))
                      (met (>= allocated target))
                      (color (if met "#98be65" "#ECBE7B")))
                 (concat (format (format "%%-%ds  " pad) token)
-                        (propertize (make-string filled ?█) 'face `(:foreground ,color))
-                        (propertize (make-string (- width filled) ?░) 'face 'shadow)
+                        (propertize (make-string solid ?█) 'face `(:foreground ,color))
+                        (propertize (make-string (- planned solid) ?█)
+                                    'face `(:foreground ,(calendorg--faded color)))
+                        (propertize (make-string (- width planned) ?░) 'face 'shadow)
                         (propertize (format "  %.4g / %.4g h" allocated target)
-                                    'face `(:foreground ,color))))))
+                                    'face `(:foreground ,color))
+                        (propertize (format "  %.4g done" done) 'face 'shadow)))))
           stats))))))
 
 ;;; Redisplay
@@ -194,7 +201,8 @@ The small hours belong to the previous day's column, the same roll
   (let* ((inhibit-read-only t)
          (size (calendorg--canvas-size))
          (w (car size)) (h (cdr size)))
-    (setq calendorg--geom (calendorg-geometry w h)
+    ;; Same anchor `calendorg-render' uses, or clicks land in the wrong column.
+    (setq calendorg--geom (calendorg-geometry w h (calendorg-view-anchor calendorg--data))
           calendorg--last-size (cons (window-body-width nil t)
                                      (window-body-height nil t)))
     (erase-buffer)
@@ -249,15 +257,28 @@ The small hours belong to the previous day's column, the same roll
     (setq calendorg--sel (mod (1- (or calendorg--sel 1)) (length calendorg--blocks)))
     (calendorg--redisplay)))
 
+(defun calendorg--first-index ()
+  "Index of the first block in the leftmost column onward.
+Blocks are sorted from Monday, so with the week rotated the first one on
+screen is the first on or after the anchor day, wrapping to index 0."
+  (let ((anchor (or (plist-get calendorg--geom :anchor) 0)))
+    (or (cl-loop for i below (length calendorg--blocks)
+                 when (>= (calendorg-block-day (aref calendorg--blocks i)) anchor)
+                 return i)
+        0)))
+
 (defun calendorg-first ()
+  "Select the first block of the week as drawn."
   (interactive)
   (when (> (length calendorg--blocks) 0)
-    (setq calendorg--sel 0) (calendorg--redisplay)))
+    (setq calendorg--sel (calendorg--first-index)) (calendorg--redisplay)))
 
 (defun calendorg-last ()
+  "Select the last block of the week as drawn."
   (interactive)
   (when (> (length calendorg--blocks) 0)
-    (setq calendorg--sel (1- (length calendorg--blocks))) (calendorg--redisplay)))
+    (setq calendorg--sel (mod (1- (calendorg--first-index)) (length calendorg--blocks)))
+    (calendorg--redisplay)))
 
 (defun calendorg-day-start ()
   (interactive)
@@ -425,8 +446,7 @@ The small hours belong to the previous day's column, the same roll
   "Pick a time range in 15 minute slots, anchored at the selection's end."
   (interactive)
   (let* ((b (calendorg--selected))
-         (day (if b (calendorg-block-day b)
-                (mod (+ 6 (nth 6 (decode-time))) 7)))
+         (day (if b (calendorg-block-day b) (car (calendorg--now))))
          (anchor (if b
                      (min (calendorg-block-end b)
                           (- calendorg-grid-end calendorg-slot))
