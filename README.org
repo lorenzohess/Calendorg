@@ -1,14 +1,15 @@
 * Calendorg
-Highly opinionated weekly schedule viewer for Doom Emacs.
+Highly opinionated bi-weekly schedule viewer and time budgeter for Doom Emacs.
 - Input: Org file (satisfying a lightweight schema)
 - Output: rendered SVG calendar
 
 [[file:calendorg-screenshot.png]]
 
 *Features:*
-1. Allocate timeblocks into your schedule.
-2. See if you meet your weekly hour targets for any hourly commitments.
-3. Beautiful SVG rendering.
+1. Add permanent commitments into your schedule.
+2. Allocate timeblocks to commitments.
+3. See if you meet your weekly hour targets for any hourly commitments.
+4. Beautiful SVG rendering.
 
 *Operation:*
 1. Keyboard driven (Vim bindings), dark mode, one window.
@@ -24,24 +25,27 @@ Needs Emacs 29+ built with =RSVG=, and optionally evil-mode.
   :init (map! :map doom-leader-open-map "c" #'calendorg))
 #+end_src
 
-Both files live in =calendorg-schedule-dir=, which defaults to the =SCHEDULE_DIR= environment variable, or =~/nextcloud-sync/todo/=. Write =schedule.org= there following [[file:schedule-format.org][schedule-format.org]]. Then =calendorg-blocks.org= is created on first allocation.
+Both files live in =calendorg-schedule-dir=, which defaults to the =SCHEDULE_DIR= environment variable, or =~/nextcloud-sync/todo/=. Write =schedule.org= there following [[file:schedule-format.org][schedule-format.org]]. Then =calendorg-blocks.org= is created on first allocation. And =calendorg-log.org= maintains a log.
 ** Usage
 =SPC o c= opens the calendar.
 
-| Keybind      | Action                    |
-|--------------+---------------------------|
-| =j=, =k=         | next, previous block      |
-| =h=, =l=         | nearest block left, right |
-| =TAB=, =S-TAB=   | same as =j=, =k=              |
-| =gg=, =G=        | first, last block of week |
-| =0=, =$=         | first, last block of day  |
-| =V=            | place a time cursor       |
-| =v=            | select a time range       |
-| =i=            | edit selected             |
-| =x=            | delete selected           |
-| =c=            | comment on selected       |
-| =gr=           | reload from disk          |
-| =q=            | quit                      |
+| Keybind    | Action                                    |
+|------------+-------------------------------------------|
+| =j=, =k=       | next, previous block                      |
+| =h=, =l=       | nearest block left, right                 |
+| =TAB=, =S-TAB= | same as =j=, =k=                              |
+| =gg=, =G=      | first, last block of week                 |
+| =0=, =$=       | first, last block of day                  |
+| =V=          | place a time cursor                       |
+| =v=          | select a time range                       |
+| =i=          | edit selected                             |
+| =x=          | delete allocation or skip scheduled block |
+| =c=          | comment on selected                       |
+| =gr=         | reload from disk                          |
+| =w=          | hide/show Week 2                          |
+| =[=          | visualize previous week(s)                |
+| =]=          | visualize next week(s)                    |
+| =q=          | quit                                      |
 
 *Visual Selection Mode*
 =V= puts a line cursor on a 15 minute boundary; =j= and =k= move it, =v= starts selecting a range from there. =v= on its own selects from the block's end.
@@ -63,11 +67,12 @@ emacsclient -c -n -F '((name . "calendorg"))' -e '(calendorg)'
 ** Configuration
 *Note:* All of these are =defcustom=, so =M-x customize-group RET calendorg= works too.
 *** Files
-| Variable                | Default                                    | Meaning                                     |
-|-------------------------+--------------------------------------------+---------------------------------------------|
-| =calendorg-schedule-dir=  | =$SCHEDULE_DIR=, else =~/nextcloud-sync/todo/= | Where schedule and timeblock files live     |
-| =calendorg-schedule-file= | =schedule.org=                               | Your schedule, never modified by Calendorg. |
-| =calendorg-blocks-file=   | =calendorg-blocks.org=                       | Your Calendorg timeblock data.              |
+| Variable                | Default                                    | Meaning                                           |
+|-------------------------+--------------------------------------------+---------------------------------------------------|
+| =calendorg-schedule-dir=  | =$SCHEDULE_DIR=, else =~/nextcloud-sync/todo/= | Where schedule and timeblock files live           |
+| =calendorg-schedule-file= | =schedule.org=                               | Your schedule, never modified by Calendorg.       |
+| =calendorg-blocks-file=   | =calendorg-blocks.org=                       | Your Calendorg timeblock data.                    |
+| =calendorg-log-file=      | =calendorg-log.org=                          | Calendorg log of past weeks, and carry-over time. |
 
 *Note:* filenames are assumed relative to =calendorg-schedule-dir= unless they are absolute.
 *** Appearance

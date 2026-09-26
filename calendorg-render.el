@@ -111,17 +111,19 @@ Falling back to the commitment is what makes an unlabelled meeting read as
 
 ;;; Geometry
 
-(defun calendorg-geometry (width height &optional anchor)
+(defun calendorg-geometry (width height &optional back week-start days)
   "Layout plist for a canvas of WIDTH by HEIGHT pixels.
-ANCHOR is the day index drawn in the leftmost column, Monday when nil.
-Every day-to-pixel conversion goes through it, so the rest of the code
-keeps working in day indices and never sees the rotation."
+DAYS columns, 7 by default, run from WEEK-START, an absolute Monday,
+after BACK columns of last week.  Days are counted from WEEK-START, so
+last week's are negative and no conversion needs a special case."
   (let* ((x0 calendorg--gutter)
          (y0 calendorg--header)
-         (col-w (/ (- width x0) 7.0))
+         (back (or back 0))
+         (days (or days 7))
+         (col-w (/ (- width x0) (float (+ days back))))
          (grid-h (- height y0)))
     (list :width width :height height :x0 x0 :y0 y0
-          :col-w col-w :grid-h grid-h :anchor (or anchor 0)
+          :col-w col-w :grid-h grid-h :back back :week-start week-start :days days
           :span (float (- calendorg-grid-end calendorg-grid-start)))))
 
 (defun calendorg-y-of (geom minute)
@@ -134,14 +136,20 @@ keeps working in day indices and never sees the rotation."
   (+ (plist-get geom :x0) (* col (plist-get geom :col-w))))
 
 (defun calendorg-x-of (geom day)
-  "Left edge of DAY's column, after rotating by the geometry's anchor."
-  (calendorg--col-x geom (mod (- day (plist-get geom :anchor)) 7)))
+  "Left edge of the column DAY days after the week start; negative is last week."
+  (calendorg--col-x geom (+ (plist-get geom :back) day)))
 
 (defun calendorg-day-at (geom x)
-  "Day index under pixel X, or nil outside the grid."
-  (let ((col (floor (/ (- x (plist-get geom :x0)) (plist-get geom :col-w)))))
-    (and (>= col 0) (<= col 6)
-         (mod (+ col (plist-get geom :anchor)) 7))))
+  "Days from the week start to the column under pixel X, or nil off the grid.
+Last week's columns give negative days."
+  (let ((col (floor (/ (- x (plist-get geom :x0)) (plist-get geom :col-w))))
+        (back (plist-get geom :back)))
+    (and (>= col 0) (< col (+ (plist-get geom :days) back)) (- col back))))
+
+(defun calendorg-date-label (date)
+  "\"Wed 30\" for absolute DATE."
+  (format "%s %d" (aref calendorg--day-labels (calendorg--weekday date))
+          (nth 1 (calendar-gregorian-from-absolute date))))
 
 (defun calendorg-minute-at (geom y)
   "Minute at pixel Y, snapped to the slot size."
@@ -188,6 +196,8 @@ keeps working in day indices and never sees the rotation."
     out))
 
 (defun calendorg--svg-grid (geom today)
+  "Rules, today's wash, hour labels and day headers.
+TODAY is today's day counted from the week start, or nil when off screen."
   (let* ((x0 (plist-get geom :x0))
          (w (plist-get geom :width))
          (col-w (plist-get geom :col-w))
@@ -206,13 +216,16 @@ keeps working in day indices and never sees the rotation."
                                             x0 y w y
                                             (if hourp calendorg-grid-color
                                               calendorg-grid-color-faint))))))
-    ;; Day separators.
-    (cl-loop for col from 1 to 6
-             do (let ((x (calendorg--col-x geom col)))
+    ;; Day separators, firmer at each Monday where one week gives way to the next.
+    (cl-loop for col from 1 below (+ (plist-get geom :days) (plist-get geom :back))
+             do (let ((x (calendorg--col-x geom col))
+                      (seam (zerop (mod (- col (plist-get geom :back)) 7))))
                   (setq out (concat out
-                                    (format "<line x1='%.1f' y1='%.1f' x2='%.1f' y2='%.1f' stroke='%s'/>"
-                                            x (plist-get geom :y0) x (plist-get geom :height)
-                                            calendorg-grid-color)))))
+                                    (format "<line x1='%.1f' y1='%.1f' x2='%.1f' y2='%.1f' stroke='%s'%s/>"
+                                            x (if seam 0 (plist-get geom :y0))
+                                            x (plist-get geom :height)
+                                            (if seam calendorg-muted calendorg-grid-color)
+                                            (if seam " stroke-width='1.5'" ""))))))
     ;; Hour labels, every two hours, 24-hour clock.
     (cl-loop for m from calendorg-grid-start to calendorg-grid-end by 120
              do (setq out (concat out
@@ -220,19 +233,26 @@ keeps working in day indices and never sees the rotation."
                                           (- x0 6) (+ (calendorg-y-of geom m) 4)
                                           calendorg--font calendorg-muted
                                           (/ (mod m 1440) 60)))))
-    ;; Day headers.
-    (dotimes (d 7)
-      (setq out (concat out
-                        (format "<text x='%.1f' y='13' text-anchor='middle' font-family='sans-serif' font-size='%d' fill='%s'%s>%s</text>"
-                                (+ (calendorg-x-of geom d) (/ col-w 2)) calendorg--font
-                                (if (eq d today) calendorg-today-color calendorg-muted)
-                                (if (eq d today) " font-weight='500'" "")
-                                (aref calendorg--day-labels d)))))
+    ;; Day headers, dated when the week is known; last week's are dimmed.
+    (dotimes (col (+ (plist-get geom :days) (plist-get geom :back)))
+      (let* ((day (- col (plist-get geom :back)))
+             (ws (plist-get geom :week-start))
+             (lastp (< day 0))
+             (todayp (eql day today)))
+        (setq out (concat out
+                          (format "<text x='%.1f' y='13' text-anchor='middle' font-family='sans-serif' font-size='%d' fill='%s'%s%s>%s</text>"
+                                  (+ (calendorg--col-x geom col) (/ col-w 2)) calendorg--font
+                                  (if todayp calendorg-today-color calendorg-muted)
+                                  (if todayp " font-weight='500'" "")
+                                  (if lastp " fill-opacity='0.55'" "")
+                                  (if ws (calendorg-date-label (+ ws day))
+                                    (aref calendorg--day-labels (mod day 7))))))))
     out))
 
 (defun calendorg--svg-block (geom data block selectedp)
   (let* ((color (calendorg-block-color data block))
          (allocp (equal (calendorg-block-type block) calendorg-allocated-type))
+         (boundp (and (calendorg-block-boundary block) (not allocp)))
          (x (+ (calendorg-x-of geom (calendorg-block-day block)) 1))
          (w (- (plist-get geom :col-w) 2))
          (y (calendorg-y-of geom (calendorg-block-start block)))
@@ -241,7 +261,8 @@ keeps working in day indices and never sees the rotation."
          (title (calendorg-block-title block))
          (out ""))
     ;; Allocated blocks carry a dashed outline and no accent bar: provisional,
-    ;; rather than a wall.
+    ;; rather than a wall.  A boundary trades its bar for a full border, since
+    ;; it opens a commitment's week.  Selection keeps its lighter outline.
     (setq out
           (format "<rect x='%.1f' y='%.1f' width='%.1f' height='%.1f' rx='3' fill='%s' fill-opacity='%.2f'%s/>"
                   x y w h color
@@ -250,8 +271,9 @@ keeps working in day indices and never sees the rotation."
                                            (calendorg--tint color 0.55)
                                            (if allocp " stroke-dasharray='3 2.5'" "")))
                         (allocp (format " stroke='%s' stroke-width='1' stroke-dasharray='3 2.5'" color))
+                        (boundp (format " stroke='%s' stroke-width='1.75'" color))
                         (t ""))))
-    (unless allocp
+    (unless (or allocp boundp)
       (setq out (concat out (format "<rect x='%.1f' y='%.1f' width='2.5' height='%.1f' rx='1' fill='%s'/>"
                                     x y h color))))
     (setq out (concat out
@@ -259,7 +281,9 @@ keeps working in day indices and never sees the rotation."
                               (+ x (if allocp 8 9)) (+ y 14) calendorg--font
                               (calendorg--tint color (if selectedp 0.65 0.45))
                               (calendorg--esc (calendorg--fit title (- w 14))))))
-    (when (>= h 40)
+    ;; The time line only where it fits: in a narrow column it would run into
+    ;; the next one, and the line under the calendar gives it anyway.
+    (when (and (>= h 40) (>= (- w 10) (* 11 calendorg--font 0.6)))
       (setq out (concat out
                         (format "<text x='%.1f' y='%.1f' font-family='monospace' font-size='%d' fill='%s'>%s–%s</text>"
                                 (+ x (if allocp 8 9)) (+ y 27) calendorg--font
@@ -330,16 +354,30 @@ keeps working in day indices and never sees the rotation."
 
 ;;; Entry point
 
-(defun calendorg-render (data blocks sel vsel width height)
-  "Return the SVG string for the week.
-BLOCKS is a vector, SEL an index or nil, VSEL a time-select plist or nil.
-Columns start at `calendorg-view-anchor', so callers hit-testing the
-result must build their geometry with the same anchor."
-  (let* ((geom (calendorg-geometry width height (calendorg-view-anchor data)))
+(defun calendorg-render (data view sel vsel width height)
+  "Return the SVG string for the week VIEW describes.
+VIEW is a plist: :week-start, the absolute Monday on screen; :days, how
+many days are shown from it; :blocks, a vector of their blocks with days
+counted from it; :back, how many of last week's columns come first; and
+:back-blocks, what is in them.
+SEL is an index into :blocks or nil, VSEL a time-select plist or nil.
+Callers hit-testing the result must build the same geometry."
+  (let* ((blocks (plist-get view :blocks))
+         (back (or (plist-get view :back) 0))
+         (ws (plist-get view :week-start))
+         (days (or (plist-get view :days) 7))
+         (geom (calendorg-geometry width height back ws days))
          (now (calendorg--now))
-         ;; Highlight the column the current moment sits in, which after
-         ;; midnight is the previous day's.
-         (today (car now)))
+         (rel (and ws (- (car now) ws)))
+         ;; The column the current moment sits in, if it is on screen.
+         (today (and rel (<= (- back) rel (1- days)) rel))
+         (layers (lambda (list)
+                   ;; Fixed blocks first, allocated over them.
+                   (dotimes (pass 2)
+                     (dolist (b list)
+                       (when (eq (equal (calendorg-block-type b) calendorg-allocated-type)
+                                 (= pass 1))
+                         (insert (calendorg--svg-block geom data b nil))))))))
     (with-temp-buffer
       (insert (format "<svg xmlns='http://www.w3.org/2000/svg' width='%d' height='%d' viewBox='0 0 %d %d'>"
                       width height width height))
@@ -347,17 +385,17 @@ result must build their geometry with the same anchor."
       (insert (format "<rect width='%d' height='%d' fill='%s'/>" width height calendorg-bg))
       (insert (calendorg--svg-grid geom today))
       (insert (calendorg--svg-sleep geom data))
-      ;; Fixed blocks first, allocated over them, selection last.
-      (dotimes (pass 2)
-        (dotimes (i (length blocks))
-          (let ((b (aref blocks i)))
-            (when (and (eq (equal (calendorg-block-type b) calendorg-allocated-type)
-                           (= pass 1))
-                       (not (eq i sel)))
-              (insert (calendorg--svg-block geom data b nil))))))
+      ;; Last week, for context only: faded, and never selected.
+      (when (plist-get view :back-blocks)
+        (insert "<g opacity='0.45'>")
+        (funcall layers (plist-get view :back-blocks))
+        (insert "</g>"))
+      (funcall layers (cl-loop for b across blocks for i from 0
+                               unless (eql i sel) collect b))
       (when (and sel (< sel (length blocks)))
         (insert (calendorg--svg-block geom data (aref blocks sel) t)))
-      (insert (or (calendorg--svg-now geom now) ""))
+      (when today
+        (insert (or (calendorg--svg-now geom (cons today (cdr now))) "")))
       (insert (or (calendorg--svg-selection geom vsel) ""))
       (insert "</svg>")
       (buffer-string))))

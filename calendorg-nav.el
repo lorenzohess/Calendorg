@@ -3,16 +3,17 @@
 ;; Each block gets a four-vector of neighbour indices, rebuilt whenever the
 ;; block set changes.  Because blocks are kept sorted by (day, start, end),
 ;; j and k are just i+/-1 modulo the block count, which runs chronologically
-;; across midnight and wraps at the week; only h and l need to search.
+;; across midnight and wraps at the end of the view; only h and l need to search.
 
 ;;; Code:
 
 (require 'cl-lib)
 (require 'calendorg-model)
 
-(defun calendorg-day-ranges (blocks)
-  "Return a 7-vector of (LO . HI) inclusive index ranges into BLOCKS, or nil."
-  (let ((ranges (make-vector 7 nil)))
+(defun calendorg-day-ranges (blocks &optional days)
+  "Return a DAYS-vector, 7 by default, of (LO . HI) index ranges into BLOCKS.
+Each is inclusive, or nil for a day with no blocks."
+  (let ((ranges (make-vector (or days 7) nil)))
     (dotimes (i (length blocks))
       (let* ((day (calendorg-block-day (aref blocks i)))
              (cur (aref ranges day)))
@@ -36,12 +37,12 @@
 (defun calendorg--scan (blocks ranges day mid dir)
   "First block on the nearest populated day from DAY in DIR, wrapping.
 Stops once the scan returns to DAY, so a lone populated day yields itself."
-  (let ((d (mod (+ day dir) 7)) (result nil))
+  (let* ((n (length ranges)) (d (mod (+ day dir) n)) (result nil))
     (while (and (null result) (/= d day))
       (let ((range (aref ranges d)))
         (if range
             (setq result (calendorg--nearest-in-day blocks range mid))
-          (setq d (mod (+ d dir) 7)))))
+          (setq d (mod (+ d dir) n)))))
     (or result
         ;; Only this day has blocks: stay put rather than returning nil.
         (let ((range (aref ranges day)))

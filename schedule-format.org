@@ -26,7 +26,10 @@ A commitment token =TOKEN= specifies an general activity which you want to try t
 
 =HOURS= is the *total* weekly budget, meetings included. If you add a color, allocated blocks referencing this commitment will render with that color, instead of the default color for allocated blocks.
 *** Blocks
-Timeblocks following block grammar.
+Timeblocks following block grammar under each Week.
+**** Week 1 <date>
+<date> should be ISO 8601 e.g. 2026-09-25
+**** Week 2
 *** Sleep
 Your sleep hours for the entire week. The time window represents an uncertainty range, which is visualized as a gradient.
 #+begin_example
@@ -36,7 +39,7 @@ Your sleep hours for the entire week. The time window represents an uncertainty 
 ** Block grammar
 To add a timeblock:
 #+begin_example
-- DAY HH:MM-HH:MM TYPE [@COMMITMENT] [label]
+- DAY HH:MM-HH:MM TYPE [@COMMITMENT[!]] [label]
   : optional comment
 #+end_example
 
@@ -44,6 +47,7 @@ To add a timeblock:
 - Times are 24-hour, zero-padded, =HH:MM=.
 - =TYPE= is a lowercase token declared under =* Types=.
 - =@COMMITMENT= is optional. It names a commitment declared under =* Commitments=, and the block's hours count toward it.
+  - The =[!]= suffix to =@COMMITMENT= is optional. It marks a boundary meeting, and hours per commitment are counted between boundary meetings.
 - =label= is optional free text to provide timeblock tagging functionality. If no label is given, the commitment is used, or else the type name is used, with hyphens turned into spaces and first character upcased, so =ice-hockey= renders as "Ice hockey".
 - A comment is a new line indented and prefixed with =:=.
 ** Rules
